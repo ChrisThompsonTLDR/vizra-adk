@@ -134,4 +134,86 @@ class DocumentChunkerTest extends TestCase
         $this->assertLessThan($normalSize, $codeSize); // Code should get smaller chunks
         $this->assertEquals(100, $normalSize); // Normal content uses configured size
     }
+
+    public function test_chunks_utf8_text_safely_without_splitting_multibyte_sequences()
+    {
+        // Arrange - Test with UTF-8 multi-byte characters (Chinese, emoji, etc.)
+        Config::set('vizra-adk.vector_memory.chunking.strategy', 'fixed');
+        Config::set('vizra-adk.vector_memory.chunking.chunk_size', 50);
+        $chunker = new DocumentChunker;
+
+        // Content with multi-byte UTF-8 characters that could be split by byte-based substr()
+        $content = 'Hello 世界 🌍 This is a test with UTF-8 characters. 日本語も大丈夫です。';
+
+        // Act
+        $chunks = $chunker->chunk($content);
+
+        // Assert - All chunks should be valid UTF-8 and JSON encodable
+        $this->assertIsArray($chunks);
+        $this->assertGreaterThan(0, count($chunks));
+
+        foreach ($chunks as $chunk) {
+            // Verify chunk is valid UTF-8
+            $this->assertTrue(mb_check_encoding($chunk, 'UTF-8'), 'Chunk should be valid UTF-8');
+
+            // Verify chunk can be JSON encoded (critical for embedding provider API calls)
+            $json = json_encode($chunk, JSON_UNESCAPED_UNICODE);
+            $this->assertNotFalse($json, 'Chunk should be JSON encodable');
+            $this->assertEquals(JSON_ERROR_NONE, json_last_error(), 'No JSON encoding errors');
+
+            // Verify chunk doesn't contain incomplete UTF-8 sequences
+            // (which would happen if substr() split a multi-byte character)
+            $this->assertStringNotContainsString("\x80", $chunk, 'Chunk should not contain standalone continuation bytes');
+            $this->assertStringNotContainsString("\x81", $chunk, 'Chunk should not contain standalone continuation bytes');
+        }
+    }
+
+    public function test_chunks_utf8_sentences_safely()
+    {
+        // Arrange - Test sentence chunking with UTF-8
+        Config::set('vizra-adk.vector_memory.chunking.strategy', 'sentence');
+        Config::set('vizra-adk.vector_memory.chunking.chunk_size', 30);
+        $chunker = new DocumentChunker;
+
+        $content = 'First sentence with 世界. Second sentence with 🌍. Third sentence with 日本語.';
+
+        // Act
+        $chunks = $chunker->chunk($content);
+
+        // Assert
+        $this->assertIsArray($chunks);
+        $this->assertGreaterThan(1, count($chunks));
+
+        foreach ($chunks as $chunk) {
+            $this->assertTrue(mb_check_encoding($chunk, 'UTF-8'), 'Chunk should be valid UTF-8');
+            $json = json_encode($chunk, JSON_UNESCAPED_UNICODE);
+            $this->assertNotFalse($json, 'Chunk should be JSON encodable');
+        }
+    }
+
+    public function test_get_overlap_content_handles_utf8_safely()
+    {
+        // Arrange
+        Config::set('vizra-adk.vector_memory.chunking.overlap', 10);
+        $chunker = new DocumentChunker;
+
+        // Chunk with UTF-8 characters at the end
+        $chunk = 'Some text before 世界 🌍 end';
+
+        // Use reflection to test protected method
+        $reflection = new \ReflectionClass($chunker);
+        $method = $reflection->getMethod('getOverlapContent');
+        $method->setAccessible(true);
+
+        // Act
+        $overlap = $method->invoke($chunker, $chunk);
+
+        // Assert
+        $this->assertIsString($overlap);
+        if (! empty($overlap)) {
+            $this->assertTrue(mb_check_encoding($overlap, 'UTF-8'), 'Overlap should be valid UTF-8');
+            $json = json_encode($overlap, JSON_UNESCAPED_UNICODE);
+            $this->assertNotFalse($json, 'Overlap should be JSON encodable');
+        }
+    }
 }

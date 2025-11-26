@@ -55,7 +55,8 @@ class DocumentChunker
             $sentence = trim($sentence);
 
             // If adding this sentence would exceed chunk size, save current chunk
-            if (! empty($currentChunk) && strlen($currentChunk.' '.$sentence) > $this->chunkSize) {
+            // Use mb_strlen for UTF-8 safe length calculation
+            if (! empty($currentChunk) && mb_strlen($currentChunk.' '.$sentence, 'UTF-8') > $this->chunkSize) {
                 $chunks[] = trim($currentChunk);
 
                 // Start new chunk with overlap if configured
@@ -92,7 +93,8 @@ class DocumentChunker
             $paragraph = trim($paragraph);
 
             // If this single paragraph is too large, chunk it by sentences
-            if (strlen($paragraph) > $this->chunkSize) {
+            // Use mb_strlen for UTF-8 safe length calculation
+            if (mb_strlen($paragraph, 'UTF-8') > $this->chunkSize) {
                 // Save current chunk if it has content
                 if (! empty($currentChunk)) {
                     $chunks[] = trim($currentChunk);
@@ -107,7 +109,8 @@ class DocumentChunker
             }
 
             // If adding this paragraph would exceed chunk size, save current chunk
-            if (! empty($currentChunk) && strlen($currentChunk."\n\n".$paragraph) > $this->chunkSize) {
+            // Use mb_strlen for UTF-8 safe length calculation
+            if (! empty($currentChunk) && mb_strlen($currentChunk."\n\n".$paragraph, 'UTF-8') > $this->chunkSize) {
                 $chunks[] = trim($currentChunk);
                 $currentChunk = $paragraph;
             } else {
@@ -125,11 +128,12 @@ class DocumentChunker
 
     /**
      * Chunk by fixed character size with overlap.
+     * Uses mb_* functions to safely handle UTF-8 multi-byte characters.
      */
     protected function chunkByFixedSize(string $content): array
     {
         $chunks = [];
-        $contentLength = strlen($content);
+        $contentLength = mb_strlen($content, 'UTF-8');
         $position = 0;
 
         while ($position < $contentLength) {
@@ -137,8 +141,9 @@ class DocumentChunker
 
             // Try to break at word boundary if we're not at the end
             if ($chunkEnd < $contentLength) {
-                $nextSpace = strpos($content, ' ', $chunkEnd);
-                $prevSpace = strrpos($content, ' ', $chunkEnd - $contentLength);
+                // Use mb_strpos for UTF-8 safe string searching
+                $nextSpace = mb_strpos($content, ' ', $chunkEnd, 'UTF-8');
+                $prevSpace = mb_strrpos(mb_substr($content, 0, $chunkEnd, 'UTF-8'), ' ', 0, 'UTF-8');
 
                 // Choose the closer word boundary
                 if ($nextSpace !== false && $prevSpace !== false) {
@@ -150,7 +155,8 @@ class DocumentChunker
                 }
             }
 
-            $chunk = substr($content, $position, $chunkEnd - $position);
+            // Use mb_substr to safely extract UTF-8 chunks without splitting multi-byte sequences
+            $chunk = mb_substr($content, $position, $chunkEnd - $position, 'UTF-8');
             $chunks[] = trim($chunk);
 
             // Move position forward, accounting for overlap
@@ -162,19 +168,22 @@ class DocumentChunker
 
     /**
      * Get overlap content from the end of a chunk.
+     * Uses mb_* functions to safely handle UTF-8 multi-byte characters.
      */
     protected function getOverlapContent(string $chunk): string
     {
-        if ($this->overlap <= 0 || strlen($chunk) <= $this->overlap) {
+        $chunkLength = mb_strlen($chunk, 'UTF-8');
+        if ($this->overlap <= 0 || $chunkLength <= $this->overlap) {
             return '';
         }
 
-        $overlapText = substr($chunk, -$this->overlap);
+        // Use mb_substr to safely extract overlap without splitting multi-byte sequences
+        $overlapText = mb_substr($chunk, -$this->overlap, null, 'UTF-8');
 
         // Try to start overlap at word boundary
-        $firstSpace = strpos($overlapText, ' ');
+        $firstSpace = mb_strpos($overlapText, ' ', 0, 'UTF-8');
         if ($firstSpace !== false && $firstSpace < $this->overlap / 2) {
-            $overlapText = substr($overlapText, $firstSpace + 1);
+            $overlapText = mb_substr($overlapText, $firstSpace + 1, null, 'UTF-8');
         }
 
         return empty(trim($overlapText)) ? '' : trim($overlapText).' ';
