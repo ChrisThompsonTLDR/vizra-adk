@@ -4,11 +4,13 @@ namespace Vizra\VizraADK\Services;
 
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use Pgvector\Laravel\Vector;
 use RuntimeException;
 use Vizra\VizraADK\Contracts\EmbeddingProviderInterface;
+use Vizra\VizraADK\Events\EmbeddingGenerated;
 use Vizra\VizraADK\Facades\Agent;
 use Vizra\VizraADK\Models\VectorMemory;
 use Vizra\VizraADK\Services\Drivers\MeilisearchVectorDriver;
@@ -213,6 +215,17 @@ class VectorMemoryManager
                 'content_length' => strlen($content),
                 'dimensions' => count($embedding),
             ], 'vector_memory');
+
+            // Dispatch EmbeddingGenerated event for tracking (VizMetrics, etc.)
+            Event::dispatch(new EmbeddingGenerated(
+                null, // Context not available in VectorMemoryManager
+                $agentName,
+                $memory,
+                $this->embeddingProvider->getProviderName(),
+                $this->embeddingProvider->getModel(),
+                $memoryData['token_count'],
+                $metadata
+            ));
 
             return $memory;
 
