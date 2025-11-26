@@ -4,9 +4,11 @@ namespace Vizra\VizraADK\Tests\Unit\VectorMemory;
 
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Event;
 use Mockery;
 use RuntimeException;
 use Vizra\VizraADK\Contracts\EmbeddingProviderInterface;
+use Vizra\VizraADK\Events\EmbeddingGenerated;
 use Vizra\VizraADK\Models\VectorMemory;
 use Vizra\VizraADK\Services\DocumentChunker;
 use Vizra\VizraADK\Services\VectorMemoryManager;
@@ -113,6 +115,67 @@ class VectorMemoryManagerTest extends TestCase
         $this->assertEquals('mock', $result->embedding_provider);
         $this->assertEquals('mock-model', $result->embedding_model);
         $this->assertEquals(384, $result->embedding_dimensions);
+    }
+
+    public function test_dispatches_embedding_generated_event_when_adding_chunk()
+    {
+        // Arrange
+        Event::fake();
+        $agentClass = TestAgent::class;
+        $agentName = 'test_agent';
+        $content = 'Test content for embedding';
+        $mockEmbedding = array_fill(0, 384, 0.1);
+
+        $this->mockEmbeddingProvider->shouldReceive('embed')
+            ->with($content)
+            ->once()
+            ->andReturn([$mockEmbedding]);
+
+        // Act
+        $result = $this->vectorMemoryManager->addChunk(
+            $agentClass,
+            $content,
+            ['source' => 'test']
+        );
+
+        // Assert - Event was dispatched
+        Event::assertDispatched(EmbeddingGenerated::class, function ($event) use ($agentName, $result) {
+            return $event->agentName === $agentName &&
+                   $event->memory->id === $result->id &&
+                   $event->provider === 'mock' &&
+                   $event->model === 'mock-model' &&
+                   $event->tokenCount === $result->token_count &&
+                   $event->metadata['source'] === 'test';
+        });
+    }
+
+    public function test_does_not_dispatch_event_when_chunk_already_exists()
+    {
+        // Arrange
+        Event::fake();
+        $agentClass = TestAgent::class;
+        $agentName = 'test_agent';
+        $content = 'Duplicate content';
+        $mockEmbedding = array_fill(0, 384, 0.1);
+
+        // First add
+        $this->mockEmbeddingProvider->shouldReceive('embed')
+            ->with($content)
+            ->once()
+            ->andReturn([$mockEmbedding]);
+
+        $firstResult = $this->vectorMemoryManager->addChunk($agentClass, $content);
+        Event::assertDispatched(EmbeddingGenerated::class, 1);
+
+        // Reset event fake
+        Event::fake();
+
+        // Second add (should return existing without generating embedding)
+        $secondResult = $this->vectorMemoryManager->addChunk($agentClass, $content);
+
+        // Assert - No new event dispatched since it's a duplicate
+        Event::assertNotDispatched(EmbeddingGenerated::class);
+        $this->assertEquals($firstResult->id, $secondResult->id);
     }
 
     public function test_throws_exception_when_embedding_provider_returns_empty_embedding()
