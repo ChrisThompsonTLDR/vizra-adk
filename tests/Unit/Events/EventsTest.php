@@ -4,7 +4,9 @@ use Illuminate\Support\Facades\Event;
 use Vizra\VizraADK\Events\AgentExecutionFinished;
 use Vizra\VizraADK\Events\AgentExecutionStarting;
 use Vizra\VizraADK\Events\AgentResponseGenerated;
+use Vizra\VizraADK\Events\EmbeddingGenerated;
 use Vizra\VizraADK\Events\TaskDelegated;
+use Vizra\VizraADK\Models\VectorMemory;
 use Vizra\VizraADK\System\AgentContext;
 
 it('creates agent response generated event correctly', function () {
@@ -129,4 +131,133 @@ it('can be serialized', function () {
     expect($unserialized->agentName)->toBe($event->agentName);
     expect($unserialized->finalResponse)->toBe($event->finalResponse);
     expect($unserialized->context->getSessionId())->toBe($event->context->getSessionId());
+});
+
+it('creates embedding generated event correctly', function () {
+    $agentName = 'test_agent';
+    $provider = 'openai';
+    $model = 'text-embedding-3-small';
+    $tokenCount = 100;
+    $metadata = ['source' => 'test', 'file_id' => '123'];
+
+    // Create a mock VectorMemory model
+    $memory = new VectorMemory([
+        'agent_name' => $agentName,
+        'content' => 'Test content',
+        'embedding_provider' => $provider,
+        'embedding_model' => $model,
+        'token_count' => $tokenCount,
+        'metadata' => $metadata,
+    ]);
+
+    $event = new EmbeddingGenerated(
+        null,
+        $agentName,
+        $memory,
+        $provider,
+        $model,
+        $tokenCount,
+        $metadata
+    );
+
+    expect($event->context)->toBeNull();
+    expect($event->agentName)->toBe($agentName);
+    expect($event->memory)->toBe($memory);
+    expect($event->provider)->toBe($provider);
+    expect($event->model)->toBe($model);
+    expect($event->tokenCount)->toBe($tokenCount);
+    expect($event->metadata)->toBe($metadata);
+});
+
+it('can dispatch embedding generated event', function () {
+    Event::fake();
+
+    $memory = new VectorMemory([
+        'agent_name' => 'test_agent',
+        'content' => 'Test content',
+        'embedding_provider' => 'openai',
+        'embedding_model' => 'text-embedding-3-small',
+        'token_count' => 100,
+    ]);
+
+    EmbeddingGenerated::dispatch(
+        null,
+        'test_agent',
+        $memory,
+        'openai',
+        'text-embedding-3-small',
+        100,
+        ['source' => 'test']
+    );
+
+    Event::assertDispatched(EmbeddingGenerated::class);
+});
+
+it('contains correct data when embedding generated event is dispatched', function () {
+    Event::fake();
+
+    $memory = new VectorMemory([
+        'agent_name' => 'test_agent',
+        'content' => 'Test content for embedding',
+        'embedding_provider' => 'openai',
+        'embedding_model' => 'text-embedding-3-small',
+        'token_count' => 150,
+    ]);
+
+    EmbeddingGenerated::dispatch(
+        null,
+        'test_agent',
+        $memory,
+        'openai',
+        'text-embedding-3-small',
+        150,
+        ['source' => 'file_upload', 'file_id' => 'abc123']
+    );
+
+    Event::assertDispatched(EmbeddingGenerated::class, function ($event) use ($memory) {
+        return $event->agentName === 'test_agent' &&
+               $event->memory->id === $memory->id &&
+               $event->provider === 'openai' &&
+               $event->model === 'text-embedding-3-small' &&
+               $event->tokenCount === 150 &&
+               $event->metadata['source'] === 'file_upload' &&
+               $event->metadata['file_id'] === 'abc123';
+    });
+});
+
+it('can serialize embedding generated event', function () {
+    // Create and save memory to database so it can be serialized
+    $memory = VectorMemory::create([
+        'agent_name' => 'test_agent',
+        'namespace' => 'default',
+        'content' => 'Test content',
+        'embedding_provider' => 'openai',
+        'embedding_model' => 'text-embedding-3-small',
+        'embedding_dimensions' => 384,
+        'token_count' => 100,
+        'embedding_vector' => array_fill(0, 384, 0.1),
+        'embedding_norm' => 1.0,
+        'content_hash' => 'test-hash',
+    ]);
+
+    $event = new EmbeddingGenerated(
+        null,
+        'test_agent',
+        $memory,
+        'openai',
+        'text-embedding-3-small',
+        100,
+        ['source' => 'test']
+    );
+
+    // Test that event can be serialized (important for queued listeners)
+    $serialized = serialize($event);
+    $unserialized = unserialize($serialized);
+
+    expect($unserialized->agentName)->toBe($event->agentName);
+    expect($unserialized->provider)->toBe($event->provider);
+    expect($unserialized->model)->toBe($event->model);
+    expect($unserialized->tokenCount)->toBe($event->tokenCount);
+    expect($unserialized->metadata)->toBe($event->metadata);
+    expect($unserialized->memory->id)->toBe($memory->id);
 });
